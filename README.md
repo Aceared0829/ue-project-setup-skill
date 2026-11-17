@@ -1,30 +1,32 @@
-# UE Project Setup (agent skill)
+# Unreal Engine setup for Linux + VS Code (agent skill)
 
 English | [简体中文](README.zh-CN.md)
 
-An agent skill that gets an Unreal Engine project to a state where an AI coding
-agent can actually work in it: the running editor is reachable over MCP, PIE
-owns the mouse and keyboard, a full-screen HUD stops eating Slate input, and
-clangd/IDE diagnostics are not drowned in false positives.
+A skill that teaches an AI coding agent how to bring up — or repair — an Unreal
+Engine 5 project on Linux: declare platform support, build from the CLI, give
+VS Code a working clangd setup, wire the editor to the agent over MCP, and make
+PIE own mouse and keyboard with a custom HUD on screen.
 
-Written from a real UE 5.8 project on Linux (Windows notes included). Every step
-was verified against the engine rather than guessed — including the parts that
-look like engine bugs but aren't.
+Nothing here is specific to one project. The lessons were distilled from real
+UE 5.8 work, but every path, module and task is a placeholder you fill in once
+per project.
 
 ## What it covers
 
-| Area | Highlights |
+| Topic | Reference |
 | --- | --- |
-| UE MCP server | Enabling `ModelContextProtocol`, auto-start on port 8000, client config for VS Code / Codex / Claude, curl handshake to verify |
-| PIE input | `FInputModeGameOnly`, Slate mouse capture reply, native window activation for embedded PIE, capture retry ladder, `UseHighPrecisionMouseMovement` |
-| HUD pass-through | `HitTestInvisible` on the widget *and* on `TakeWidget()`, why `pointer-events: none` in RmlUi `.rcss` is not enough |
-| clangd | `GenerateClangDatabase` mode, stale-database detection by file list (not mtime), suppressing `clangd/unused-includes` for UE umbrella headers |
-| Build / hygiene | RmlUi/Slate bridge on Linux, `.uproject` `PlatformAllowList`, what belongs in `.gitignore`, why optional `.props` imports are local overrides |
+| Engine pinning, CLI builds, editor launch with a usable display | `SKILL.md` steps 1–4 |
+| VS Code: extensions, `settings.json`, `tasks.json`, `scripts/ue.sh` | [references/vscode-linux.md](references/vscode-linux.md) |
+| clangd: compile database, staleness detection, `.clangd`, false positives | [references/vscode-linux.md](references/vscode-linux.md) |
+| UE MCP server + client config + handshake verification | `SKILL.md` step 7 |
+| PIE mouse/keyboard capture, HUD Slate pass-through | [references/pie-input-and-hud.md](references/pie-input-and-hud.md) |
+| `.uproject` platform declarations, porting Windows-only native plugins | [references/plugins-and-vcs.md](references/plugins-and-vcs.md) |
+| Ignore rules, per-machine files, optional `.props` overrides | [references/plugins-and-vcs.md](references/plugins-and-vcs.md) |
 
 ## Install
 
 Clone straight into your skills directory — the repository root *is* the skill
-directory:
+directory, so nothing needs moving:
 
 ```bash
 # Codex
@@ -36,25 +38,28 @@ git clone https://github.com/Aceared0829/ue-project-setup-skill.git \
   ~/.claude/skills/ue-project-setup
 ```
 
-The agent loads `SKILL.md` and pulls in `references/*.md` on demand, so the
-detailed material costs nothing until it is relevant.
+The agent loads `SKILL.md` and pulls in a reference only when the step needs it,
+so the long material costs no context until it is relevant.
 
 ## Layout
 
 ```
-SKILL.md                 # ordered checklist, the entry point
+SKILL.md                        # ordered checklist: build -> VS Code -> agent -> input
 references/
-  pie-input-and-hud.md   # symptom -> cause -> fix table + Slate capture code
-  linux-toolchain.md     # RmlUi bridge, clangd, .uproject platforms, VCS hygiene
+  vscode-linux.md               # clangd, compile database, tasks.json, ue.sh
+  pie-input-and-hud.md          # symptom -> cause -> fix, Slate capture code
+  plugins-and-vcs.md            # platforms, native plugin porting, ignore rules
 ```
 
 ## Notes
 
-- Defaults target UE 5.8; most of it applies to 5.3+ unchanged. Anything
-  version-specific says so explicitly.
-- The skill is opinionated on purpose: it tells the agent what *not* to do
-  (delete `CoreMinimal.h`, commit absolute engine paths, guard platforms by
-  throwing) because those failures cost real debugging time.
+- Written against UE 5.8; the material applies to 5.3+ unless a step says
+  otherwise. MCP needs 5.6+ (`Engine/Plugins/Experimental/ModelContextProtocol`).
+- It is opinionated on purpose: it tells the agent what *not* to do (delete an
+  include clangd flags, commit absolute engine paths, guard platforms by
+  throwing) because each of those costs a debugging session.
+- Verification is part of the instructions: a build command, a curl handshake, a
+  logged `HasMouseCapture`. "It looks fine" is not a step.
 
 ## License
 

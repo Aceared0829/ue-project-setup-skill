@@ -1,0 +1,221 @@
+# VS Code on Linux
+
+Target setup: clangd is the only C++ language server, tasks build through UB's
+own `Build.sh`, and the compile database is kept fresh automatically.
+
+## Extensions
+
+| Purpose | Extension |
+| --- | --- |
+| C++ language server | `llvm-vs-code-extensions.vscode-clangd` |
+| Support files (`.uproject` JSON, `.rml`/`.rcss` if used) | any JSON/CSS grammar; set associations instead of installing more |
+| Tasks / terminal | built in, no extension needed |
+
+Turn the Microsoft C++ extension's IntelliSense **off** if it is installed.
+Two language servers analyzing the same UE file produce two contradictory sets
+of diagnostics, and the MS one cannot read UBT's flags.
+
+```jsonc
+"C_Cpp.intelliSenseEngine": "disabled",
+"C_Cpp.errorSquiggles": "disabled"
+```
+
+## settings.json
+
+```jsonc
+{
+  // clangd reads the UBT-generated database, not a hand-written one.
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}/.vscode",
+    "--background-index",
+    "--header-insertion=never",
+    "--completion-style=detailed",
+    "--inlay-hints",
+    // UE builds with its own clang from Engine/Extras/ThirdPartyNotUE/...;
+    // without --query-driver clangd guesses the wrong builtin target/sysroot.
+    "--query-driver=/path/to/UE_5.8/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/*/x86_64-unknown-linux-gnu/bin/clang++"
+  ],
+  "clangd.onConfigChanged": "restart",
+
+  "[cpp]": { "editor.insertSpaces": false, "editor.tabSize": 4 },
+
+  "files.associations": { "*.inl": "cpp" },
+
+  // These trees dwarf Source/ and change constantly during builds.
+  "search.exclude": {
+    "**/Binaries": true,
+    "**/Intermediate": true,
+    "**/Saved": true,
+    "**/DerivedDataCache": true,
+    "**/Plugins/**/ThirdParty/**": true
+  },
+  "files.watcherExclude": {
+    "**/Binaries/**": true,
+    "**/Intermediate/**": true,
+    "**/Saved/**": true,
+    "**/DerivedDataCache/**": true
+  }
+}
+```
+
+`--query-driver` accepts a glob. If the path is wrong clangd just skips it, so a
+stale value degrades quietly — re-check it after upgrading the engine.
+
+## tasks.json
+
+Uses the helper below, so task definitions stay one line each.
+
+```jsonc
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "UE: Build editor (Linux Development)",
+      "type": "process",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/ue.sh", "BuildEditor"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "UE: Regenerate clang database",
+      "type": "process",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/ue.sh", "GenerateClangDatabase"],
+      "problemMatcher": []
+    },
+    {
+      "label": "UE: Launch editor",
+      "type": "process",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/ue.sh", "LaunchEditor"],
+      "problemMatcher": []
+    }
+  ]
+}
+```
+
+## scripts/ue.sh
+
+Portable version of the helper: engine path from `$UE_ROOT`, else from a
+gitignored `.vscode/ue-root` file, else a clear error. Nothing here is
+project-specific except the three variables at the top.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_NAME="<Project>"
+TARGET="${PROJECT_NAME}Editor"
+PLATFORM="Linux"
+CONFIGURATION="Development"
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+UE_ROOT="${UE_ROOT:-$(cat "$REPO_ROOT/.vscode/ue-root" 2>/dev/null || true)}"
+if [[ -z "${UE_ROOT}" || ! -f "$UE_ROOT/Engine/Build/Build.version" ]]; then
+    echo "Set UE_ROOT or write the engine path to .vscode/ue-root" >&2
+    exit 1
+fi
+
+PROJECT="$REPO_ROOT/$PROJECT_NAME.uproject"
+BUILD_SH="$UE_ROOT/Engine/Build/BatchFiles/Linux/Build.sh"
+GENERATE_PROJECTS_SH="$UE_ROOT/Engine/Build/BatchFiles/Linux/GenerateProjectFiles.sh"
+EDITOR="$UE_ROOT/Engine/Binaries/Linux/UnrealEditor"
+
+CLANG_DB="$REPO_ROOT/.vscode/compile_commands.json"
+CLANG_DB_SNAPSHOT="$REPO_ROOT/.vscode/.clangdb-source-list"
+
+# UBT writes compile_commands.json only in -Mode=GenerateClangDatabase.
+# Stale entries point at files that moved, and clangd then reports phantom
+# errors across the whole project. Compare the FILE LIST, not mtimes: sync
+# tools and builds both touch timestamps, so mtime checks rebuild every build.
+source_file_list() {
+    find "$REPO_ROOT/Source" -type f \( -name '*.h' -o -name '*.cpp' \) | sort
+}
+
+refresh_clang_database_if_stale() {
+    local current
+    current="$(source_file_list)"
+    if [[ -f "$CLANG_DB" && -f "$CLANG_DB_SNAPSHOT" ]] \
+        && diff -q <(printf '%s\n' "$current") "$CLANG_DB_SNAPSHOT" >/dev/null 2>&1; then
+        return
+    fi
+    echo "Source list changed; regenerating compile_commands.json..." >&2
+    "$BUILD_SH" -Mode=GenerateClangDatabase \
+        "-Project=$PROJECT" "-Target=$TARGET $PLATFORM $CONFIGURATION" \
+        "-OutputDir=$REPO_ROOT/.vscode"
+    printf '%s\n' "$current" > "$CLANG_DB_SNAPSHOT"
+}
+
+case "${1:-}" in
+    BuildEditor)
+        refresh_clang_database_if_stale
+        "$BUILD_SH" "$TARGET" "$PLATFORM" "$CONFIGURATION" \
+            "-Project=$PROJECT" -WaitMutex -NoHotReloadFromIDE -Progress
+        ;;
+    GenerateClangDatabase)
+        "$BUILD_SH" -Mode=GenerateClangDatabase \
+            "-Project=$PROJECT" "-Target=$TARGET $PLATFORM $CONFIGURATION" \
+            "-OutputDir=$REPO_ROOT/.vscode"
+        source_file_list > "$CLANG_DB_SNAPSHOT"
+        ;;
+    GenerateProjectFiles)
+        "$GENERATE_PROJECTS_SH" "-project=$PROJECT" -game -engine -progress
+        ;;
+    LaunchEditor)
+        DISPLAY="${DISPLAY:-:0}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
+            "$EDITOR" "$PROJECT" -log
+        ;;
+    *)
+        echo "usage: $0 {BuildEditor|GenerateClangDatabase|GenerateProjectFiles|LaunchEditor}" >&2
+        exit 2
+        ;;
+esac
+```
+
+## .clangd
+
+```yaml
+CompileFlags:
+  CompilationDatabase: .vscode
+  # clangd only searches cwd and its parents for the database.
+
+  # UBT emits flags for the engine's clang/msvc; the local clangd rejects some.
+  Remove: [-resource-dir, -Werror, -WX, /WX, -mwaitpkg, -fms-hotpatch]
+  Add: [-Wno-unknown-warning-option, -Wno-unused-command-line-argument, -D_MSVC_TRADITIONAL=0]
+
+Diagnostics:
+  # IncludeCleaner cannot model UE's shared PCH or transitive *.generated.h
+  # dependencies: it calls CoreMinimal.h "not used directly" and the offered
+  # fix breaks the build.
+  UnusedIncludes: None
+```
+
+Leave `MissingIncludes` at its default; it is a separate key and often useful.
+
+## Verifying diagnostics without the editor
+
+`clangd --check=<file>` runs syntax and tweaks but **not** IncludeCleaner, so it
+looks clean while the editor still shows the warning. To see exactly what VS Code
+gets, speak LSP: send `initialize`, `initialized`, `textDocument/didOpen` over
+stdio and read `textDocument/publishDiagnostics` for that URI. `--check` failing
+with `ExtractFunction ==> FAIL: Cannot extract break/continue` is a code-action
+probe failing, not a compile error — ignore it.
+
+Other flags worth knowing:
+
+```bash
+clangd --check=Source/.../File.cpp --compile-commands-dir=.vscode   # syntax only
+clangd --check=... --log=verbose                                    # why a header is unresolved
+```
+
+## Symptom → cause
+
+| Symptom | Cause |
+| --- | --- |
+| Whole project red, `file not found` on your own headers | stale `compile_commands.json` after files moved |
+| Works in terminal, red in VS Code | clangd never picked up `.clangd` / wrong `--compile-commands-dir` |
+| Phantom errors on engine types | `--query-driver` missing → wrong builtin target |
+| Every UE header "not used directly" | IncludeCleaner; `UnusedIncludes: None` |
+| Duplicate, contradictory squiggles | MS C++ IntelliSense still enabled |
+| Autocomplete slow / machine pegged | no `--background-index`, or `Binaries/`+`Intermediate/` indexed via search |

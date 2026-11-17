@@ -1,67 +1,142 @@
 ---
 name: ue-project-setup
-description: Configure an Unreal Engine project for AI-assisted work — enable the built-in UE MCP server and connect VS Code/Codex/Claude to it, fix PIE mouse capture and Enhanced Input (cursor escapes the window, camera won't turn, WASD dead), make full-screen HUD widgets pass Slate input through, and build the RmlUi/Slate native toolchain on Linux. Use when setting up a new UE project, when the editor is open but the assistant can't reach it, or when PIE input is broken. Not for gameplay feature work.
+description: Set up an Unreal Engine 5 project on Linux for VS Code and AI agents — declare platform support, build the editor from the CLI, generate compile_commands.json and configure clangd (including UE umbrella-header false positives), wire the built-in UE MCP server so an assistant can drive the running editor, and fix PIE mouse/keyboard capture plus HUD Slate pass-through. Use when setting up or repairing a UE project on Linux, when VS Code shows phantom errors or no IntelliSense, when the editor is running but the assistant cannot reach it, or when PIE input is broken. Not for gameplay feature work.
 ---
 
-# UE Project Setup
+# Unreal Engine project setup (Linux + VS Code + AI agent)
 
-Bootstrap checklist for a UE project you want to drive from an AI agent. The
-goal is: the running editor is reachable over MCP, and PIE takes mouse/keyboard
-properly even with a custom HUD on screen.
+End state: `bash` can build the editor, VS Code resolves C++ with no phantom
+squiggles, the running editor is reachable over MCP, and PIE owns mouse and
+keyboard even with a full-screen HUD.
 
-Do the steps in order. Each one is verifiable on its own; don't move on with a
-failing step. Restart the editor after changing plugin/config files — .uproject
-and settings ini are read at startup.
+Do the steps in order. Each one is verifiable on its own, and every later step
+depends on the previous one succeeding — a broken build makes clangd and MCP
+look broken too.
 
-## 1. Enable the MCP plugin
+## 1. Pin the engine once
 
-Add to `<Project>.uproject` under `Plugins` (UE 5.8 ships it at
-`Engine/Plugins/Experimental/ModelContextProtocol`):
+Everything below needs one absolute engine path. Export it for the session and
+keep the per-machine value out of version control:
+
+```bash
+export UE_ROOT=/path/to/UE_5.8
+test -f "$UE_ROOT/Engine/Build/Build.version" && echo ok
+```
+
+For an installed (launcher) build, `Engine/Binaries/Linux/UnrealEditor` already
+exists. For a source build it does not until you compile it once — see step 3.
+
+## 2. Declare platform support
+
+Linux must be declared, not assumed. Modules whose binary ships Windows-only
+must be excluded instead of failing at link time:
+
+```jsonc
+// <Project>.uproject -> Modules
+{ "Name": "SomeWinOnlyPlugin", "Enabled": true, "PlatformAllowList": ["Win64"] }
+```
 
 ```json
+// <Plugin>.uplugin
+"SupportedTargetPlatforms": ["Win64", "Linux"]
+```
+
+Details and the failure modes: [references/plugins-and-vcs.md](references/plugins-and-vcs.md).
+
+## 3. Build from the CLI before touching VS Code
+
+```bash
+"$UE_ROOT/Engine/Build/BatchFiles/Linux/Build.sh" \
+  <Project>Editor Linux Development \
+  -Project="$PWD/<Project>.uproject" -WaitMutex -NoHotReloadFromIDE -Progress
+```
+
+Target name is `<Project>Editor` for the editor, `<Project>` for the game.
+`-WaitMutex` keeps concurrent invocations from corrupting the build;
+`-NoHotReloadFromIDE` avoids waiting on a live editor. If this fails, stop —
+fixing the toolchain is cheaper than debugging IntelliSense against a broken
+build.
+
+## 4. Launch the editor with a usable display
+
+```bash
+DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/$(id -u) \
+  "$UE_ROOT/Engine/Binaries/Linux/UnrealEditor" "$PWD/<Project>.uproject" -log
+```
+
+`XDG_RUNTIME_DIR` unset is the usual reason a window appears but input dies.
+Add `-log` so the log file exists to grep later. When launching from an agent or
+SSH session, these two variables are the difference between "editor runs" and
+"editor starts but PIE never gets focus".
+
+## 5. Wire VS Code
+
+See [references/vscode-linux.md](references/vscode-linux.md) for the full
+`settings.json`, `tasks.json` and a `scripts/ue.sh` helper.
+
+Minimum:
+
+- C++ language server: clangd extension, with `C_Cpp.intelliSenseEngine` off so
+  you do not get two sets of contradictory diagnostics.
+- `clangd.arguments`: `--compile-commands-dir=${workspaceFolder}/.vscode`,
+  `--background-index`, `--header-insertion=never`, and `--query-driver=` the
+  engine's Linux `clang++`.
+- Tasks for build / generate project files / generate compile database / launch
+  editor, so the terminal recipe lives in the workspace instead of your history.
+- Exclude `Binaries/`, `Intermediate/`, `Saved/`, `DerivedDataCache/` from
+  search and the file watcher.
+
+## 6. clangd needs a compile database that UBT does not make by default
+
+`compile_commands.json` is **not** produced by `GenerateProjectFiles` or by a
+normal build — only by the explicit tool mode:
+
+```bash
+"$UE_ROOT/Engine/Build/BatchFiles/Linux/Build.sh" \
+  -Mode=GenerateClangDatabase \
+  "-Project=$PWD/<Project>.uproject" \
+  "-Target=<Project>Editor Linux Development" \
+  "-OutputDir=$PWD/.vscode"
+```
+
+Regenerate whenever source files are added, renamed or deleted; content edits do
+not need it. Detect staleness by comparing a **sorted file list**, never mtimes
+(sync tools and builds both touch timestamps). `.clangd` should point at the
+database and strip MSVC-only flags. UE's umbrella headers also need
+`Diagnostics.UnusedIncludes: None` — otherwise clangd offers a "fix" that deletes
+`CoreMinimal.h` and breaks the build. All of this, with verification steps, is in
+[references/vscode-linux.md](references/vscode-linux.md).
+
+## 7. Let the AI agent drive the editor
+
+UE 5.6+ ships the server at
+`Engine/Plugins/Experimental/ModelContextProtocol`:
+
+```jsonc
+// <Project>.uproject
 { "Name": "ModelContextProtocol", "Enabled": true }
 ```
 
-If the project is Windows-only for other reasons, do **not** limit this plugin
-per platform; MCP is editor-side and works wherever the editor runs.
-
-## 2. Auto-start the server
-
-`Config/DefaultEditorPerProjectUserSettings.ini`:
-
 ```ini
+; Config/DefaultEditorPerProjectUserSettings.ini
 [/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]
 bAutoStartServer=True
 ServerPortNumber=8000
 ServerUrlPath=/mcp
 ```
 
-Field names come from `ModelContextProtocolEngine`'s settings class; the other
-useful one is `bEnableToolSearch` (default true).
-
-**Gotcha:** this is `Default...` for *per-user* settings. If the machine already
-has `Saved/Config/<Platform>Editor/EditorPerProjectUserSettings.ini` with an
-explicit value, that wins and the Default file appears to do nothing. Either set
-it once through Project Settings, or remove the key from the Saved file.
-
-## 3. Point the AI clients at it
+Clients disagree on the wrapper key, so keep both files:
 
 | Client | File | Shape |
 | --- | --- | --- |
 | VS Code | `.vscode/mcp.json` | `{ "servers": { ... } }` |
 | Codex / Claude | `.mcp.json` | `{ "mcpServers": { ... } }` |
 
-Both use the same entry:
-
 ```json
-{
-  "mcpServers": {
-    "unreal-mcp": { "type": "http", "url": "http://127.0.0.1:8000/mcp" }
-  }
-}
+{ "type": "http", "url": "http://127.0.0.1:8000/mcp" }
 ```
 
-## 4. Verify before debugging anything else
+Verify before blaming the client:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8000/mcp \
@@ -71,53 +146,45 @@ curl -sS -X POST http://127.0.0.1:8000/mcp \
 ```
 
 A JSON-RPC result means the server is up. Connection refused means: editor not
-running, plugin not enabled/compiled, port taken, or the Saved-config override
-above. Check the editor log for the server startup line before touching client
-config.
+running, plugin disabled or not compiled for Linux, port taken, or — the common
+one — `Saved/Config/LinuxEditor/EditorPerProjectUserSettings.ini` overriding the
+`Default...` file, since per-user settings already materialized there win.
 
-## 5. Make PIE own the mouse
+## 8. Make PIE own mouse and keyboard
 
 ```ini
 [/Script/UnrealEd.LevelEditorPlaySettings]
 GameGetsMouseControl=True
 ```
 
-This alone is not enough in embedded PIE — see
-[references/pie-input-and-hud.md](references/pie-input-and-hud.md) for the
-controller-side capture code and the symptom→cause table.
+That is necessary but not sufficient in embedded PIE. Controller-side capture,
+the retry ladder, and the HUD `HitTestInvisible` rule are in
+[references/pie-input-and-hud.md](references/pie-input-and-hud.md). Verify with
+logged state (`HasMouseCapture`, `HasKeyboardFocus`, non-zero Move/Look), not by
+feel.
 
-## 6. HUD must not eat Slate events
+## 9. Third-party plugins with native dependencies
 
-A full-screen Slate/RmlUi/UMG HUD whose widget returns `Handled` for mouse
-events will kill camera look and can steal keyboard focus. Set
-`HitTestInvisible` on the widget **and** on the `TakeWidget()` result after
-adding it to the viewport. Details and the RmlUi-specific reason are in the same
-reference.
+A plugin that only builds on Windows, or vendors a CMake/Rust project, needs a
+Linux build path before the editor will load it. Worked pattern (CMake branches,
+artifact naming, `$ORIGIN` RPATH, one `PLATFORM_WINDOWS`-style macro header):
+[references/plugins-and-vcs.md](references/plugins-and-vcs.md).
 
-## 7. Build-side bits (only if the project needs them)
+## 10. Keep the repo clean
 
-- RmlUi/Slate native bridge on Linux, `.uproject` platform allow lists, clangd
-  compile database, and silencing the UE `CoreMinimal.h is not used directly`
-  false positive (`Diagnostics.UnusedIncludes: None`):
-  [references/linux-toolchain.md](references/linux-toolchain.md).
-- Version-control hygiene for generated dirs and per-machine files: same
-  reference, last section.
-
-## Ordering for a brand-new project
-
-1. Enable plugins in `.uproject` first — the editor must compile before any MCP
-   or input work can be tested.
-2. Add ini + client JSON, restart, verify with the curl probe.
-3. Only then touch input/HUD code, and verify with logs, not by feel: log
-   whether the viewport has mouse capture, keyboard focus, and whether Move/Look
-   receive non-zero values.
+Ignore `Binaries/`, `Intermediate/`, `Saved/`, `DerivedDataCache/`, generated
+project files, and anything holding an absolute engine path. `.vscode/` is
+ignored by UE's default `.gitignore` — if you want to share tasks, negate just
+that file (`!/.vscode/tasks.json`) and keep the machine-specific bits out.
+Rules and the `.props`-override case: [references/plugins-and-vcs.md](references/plugins-and-vcs.md).
 
 ## Don't
 
-- Don't `throw new BuildException("... currently supports Win64")` as a platform
-  guard when adding Linux support; branch on `Target.Platform` and select the
-  native library per platform.
-- Don't reach for private engine APIs (`FSceneViewport::AcquireFocusAndCapture`
-  is private in 5.8) when public Slate APIs reproduce the same reply.
+- Don't guard a platform by throwing (`BuildException("... supports Win64")`) —
+  branch on `Target.Platform` and pick the native library per platform.
+- Don't delete an include clangd calls unused in UE code; check whether the
+  header is a PCH/umbrella header first.
 - Don't commit absolute engine paths (`D:\UE_5.8\Engine`,
-  `/path/to/UE_5.8.4/Engine`) in plugin `.props` files — they are per-machine.
+  `/path/to/UE_5.8/Engine`) into shared files.
+- Don't reach for private engine APIs when public ones reproduce the behavior;
+  they break on minor upgrades.
