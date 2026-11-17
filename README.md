@@ -1,5 +1,7 @@
 # UE Project Setup (agent skill)
 
+English | [简体中文](README.zh-CN.md)
+
 An agent skill that gets an Unreal Engine project to a state where an AI coding
 agent can actually work in it: the running editor is reachable over MCP, PIE
 owns the mouse and keyboard, a full-screen HUD stops eating Slate input, and
