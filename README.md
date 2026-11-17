@@ -23,6 +23,12 @@ per project.
 | `.uproject` platform declarations, porting Windows-only native plugins | [references/plugins-and-vcs.md](references/plugins-and-vcs.md) |
 | Ignore rules, per-machine files, optional `.props` overrides | [references/plugins-and-vcs.md](references/plugins-and-vcs.md) |
 
+## Copy-paste files
+
+[`examples/`](examples/) holds a working `.clangd`, `.vscode/settings.json`,
+`.vscode/tasks.json` and `scripts/ue.sh`. Copy them in, set `PROJECT_NAME` and the
+engine path, then run `bash scripts/ue.sh Check`.
+
 ## Install
 
 Clone straight into your skills directory — the repository root *is* the skill
@@ -49,6 +55,7 @@ references/
   vscode-linux.md               # clangd, compile database, tasks.json, ue.sh
   pie-input-and-hud.md          # symptom -> cause -> fix, Slate capture code
   plugins-and-vcs.md            # platforms, native plugin porting, ignore rules
+examples/                       # working .clangd, .vscode/*, scripts/ue.sh
 ```
 
 ## Notes

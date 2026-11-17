@@ -1,7 +1,10 @@
 # VS Code on Linux
 
-Target setup: clangd is the only C++ language server, tasks build through UB's
+Target setup: clangd is the only C++ language server, tasks build through UBT's
 own `Build.sh`, and the compile database is kept fresh automatically.
+
+Working copies of every file below live in [`../examples/`](../examples/) —
+copy them in rather than retyping.
 
 ## Extensions
 

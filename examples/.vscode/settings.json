@@ -1,0 +1,42 @@
+{
+  // clangd reads the UBT-generated database. Replace the query-driver path
+  // with your engine's Linux clang++ (glob is allowed).
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}/.vscode",
+    "--background-index",
+    "--header-insertion=never",
+    "--completion-style=detailed",
+    "--inlay-hints",
+    "--query-driver=/path/to/UE_5.8/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/*/x86_64-unknown-linux-gnu/bin/clang++"
+  ],
+  "clangd.onConfigChanged": "restart",
+
+  // One language server only; the MS extension cannot read UBT flags.
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.errorSquiggles": "disabled",
+
+  "[cpp]": {
+    "editor.insertSpaces": false,
+    "editor.tabSize": 4,
+    "editor.formatOnSave": false
+  },
+
+  "files.associations": {
+    "*.inl": "cpp"
+  },
+
+  "search.exclude": {
+    "**/Binaries": true,
+    "**/Intermediate": true,
+    "**/Saved": true,
+    "**/DerivedDataCache": true,
+    "**/Plugins/**/ThirdParty/**": true
+  },
+  "files.watcherExclude": {
+    "**/Binaries/**": true,
+    "**/Intermediate/**": true,
+    "**/Saved/**": true,
+    "**/DerivedDataCache/**": true,
+    "**/Plugins/**/ThirdParty/**": true
+  }
+}

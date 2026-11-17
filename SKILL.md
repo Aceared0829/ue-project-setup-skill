@@ -71,8 +71,9 @@ SSH session, these two variables are the difference between "editor runs" and
 
 ## 5. Wire VS Code
 
-See [references/vscode-linux.md](references/vscode-linux.md) for the full
-`settings.json`, `tasks.json` and a `scripts/ue.sh` helper.
+Ready-to-copy files: [examples/](examples/) (`.clangd`, `.vscode/settings.json`,
+`.vscode/tasks.json`, `scripts/ue.sh`). Rationale and the full walkthrough:
+[references/vscode-linux.md](references/vscode-linux.md).
 
 Minimum:
 

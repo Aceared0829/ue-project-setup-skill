@@ -21,6 +21,12 @@
 | `.uproject` 平台声明、把仅 Windows 的原生插件移植到 Linux | [references/plugins-and-vcs.md](references/plugins-and-vcs.md) |
 | 忽略规则、本机专属文件、可选 `.props` 覆盖 | [references/plugins-and-vcs.md](references/plugins-and-vcs.md) |
 
+## 可直接抄的文件
+
+[`examples/`](examples/) 里是能直接用的 `.clangd`、`.vscode/settings.json`、
+`.vscode/tasks.json` 和 `scripts/ue.sh`。复制进去，改掉 `PROJECT_NAME` 和引擎路径，
+再跑 `bash scripts/ue.sh Check` 验证。
+
 ## 安装
 
 直接 clone 进 skills 目录即可，仓库根目录本身就是 skill 目录，不需要再挪文件：
@@ -46,6 +52,7 @@ references/
   vscode-linux.md               # clangd、编译数据库、tasks.json、ue.sh
   pie-input-and-hud.md          # 症状 -> 原因 -> 修法，Slate 捕获代码
   plugins-and-vcs.md            # 平台声明、原生插件移植、忽略规则
+examples/                       # 可直接使用的 .clangd、.vscode/*、scripts/ue.sh
 ```
 
 ## 说明
