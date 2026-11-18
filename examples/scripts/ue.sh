@@ -33,9 +33,17 @@ CLANG_DB_SNAPSHOT="$REPO_ROOT/.vscode/.clangdb-source-list"
 #
 # Compare the FILE LIST rather than mtimes: sync tools and builds both touch
 # timestamps, so an mtime check would rebuild on every build, while a pure
-# content edit never needs a new database (the flags are unchanged).
+# content edit never needs a new database (the flags are unchanged). Build.cs
+# is in the list because module dependencies change the flags too.
 source_file_list() {
-    find "$REPO_ROOT/Source" -type f \( -name '*.h' -o -name '*.cpp' \) | sort
+    local roots=("$REPO_ROOT/Source")
+    if [[ -d "$REPO_ROOT/Plugins" ]]; then
+        roots+=("$REPO_ROOT/Plugins")
+    fi
+    find "${roots[@]}" \
+        -type d -name Intermediate -prune -o \
+        -type f \( -name '*.h' -o -name '*.cpp' -o -name '*.cs' \) -print \
+        | sort
 }
 
 refresh_clang_database_if_stale() {
@@ -48,7 +56,7 @@ refresh_clang_database_if_stale() {
     echo "source list changed; regenerating .vscode/compile_commands.json" >&2
     "$BUILD_SH" -Mode=GenerateClangDatabase \
         "-Project=$PROJECT" "-Target=$TARGET $PLATFORM $CONFIGURATION" \
-        "-OutputDir=$REPO_ROOT/.vscode"
+        "-OutputDir=$REPO_ROOT/.vscode" -WaitMutex
     printf '%s\n' "$current" > "$CLANG_DB_SNAPSHOT"
 }
 
@@ -74,8 +82,21 @@ case "${1:-}" in
     GenerateClangDatabase)
         "$BUILD_SH" -Mode=GenerateClangDatabase \
             "-Project=$PROJECT" "-Target=$TARGET $PLATFORM $CONFIGURATION" \
-            "-OutputDir=$REPO_ROOT/.vscode"
+            "-OutputDir=$REPO_ROOT/.vscode" -WaitMutex
         source_file_list > "$CLANG_DB_SNAPSHOT"
+        ;;
+    WatchClangDatabase)
+        # Editor-time auto-refresh: poll the file list (a single find) every few
+        # seconds; regenerate only when files were added, renamed or removed.
+        # One UBT run costs ~2s for a small plugin, so this stays cheap, and
+        # content saves never touch the database.
+        refresh_clang_database_if_stale || true
+        echo "watching $REPO_ROOT for source files (Ctrl+C to stop)..." >&2
+        while true; do
+            sleep 5
+            refresh_clang_database_if_stale \
+                || echo "warn: database refresh failed; retrying" >&2
+        done
         ;;
     GenerateProjectFiles)
         "$GENERATE_PROJECTS_SH" "-project=$PROJECT" -game -engine -progress
@@ -86,7 +107,7 @@ case "${1:-}" in
             "$EDITOR" "$PROJECT" -log
         ;;
     *)
-        echo "usage: $0 {Check|BuildEditor|GenerateClangDatabase|GenerateProjectFiles|LaunchEditor}" >&2
+        echo "usage: $0 {Check|BuildEditor|GenerateClangDatabase|WatchClangDatabase|GenerateProjectFiles|LaunchEditor}" >&2
         exit 2
         ;;
 esac

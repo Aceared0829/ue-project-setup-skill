@@ -27,9 +27,8 @@ of diagnostics, and the MS one cannot read UBT's flags.
 
 ```jsonc
 {
-  // clangd reads the UBT-generated database, not a hand-written one.
+  // Do NOT pass --compile-commands-dir. See "One database per source tree".
   "clangd.arguments": [
-    "--compile-commands-dir=${workspaceFolder}/.vscode",
     "--background-index",
     "--header-insertion=never",
     "--completion-style=detailed",
@@ -64,6 +63,62 @@ of diagnostics, and the MS one cannot read UBT's flags.
 `--query-driver` accepts a glob. If the path is wrong clangd just skips it, so a
 stale value degrades quietly — re-check it after upgrading the engine.
 
+### One database per source tree
+
+`--compile-commands-dir` takes **one** value. LLVM's command-line parser keeps
+the last occurrence, so a settings list like
+
+```jsonc
+"clangd.arguments": [
+  "--compile-commands-dir=${workspaceFolder}/ProjectA/.vscode",
+  "--compile-commands-dir=${workspaceFolder}/plugins-mirror"
+]
+```
+
+points clangd at the mirror only. If that directory has no
+`compile_commands.json`, clangd falls back to a generic command without any
+`-I` flags — and every file in the *working* project reports
+`'Game/Foo.h' file not found`, on headers that exist and compile fine.
+Nothing in the log says the first directory was dropped.
+
+Select the database from config instead, one `.clangd` per tree:
+
+```yaml
+# ProjectA/.clangd            -> ProjectA/.vscode/compile_commands.json
+CompileFlags:
+  CompilationDatabase: .vscode
+
+# plugins-mirror/.clangd      -> plugins-mirror/compile_commands.json
+CompileFlags:
+  CompilationDatabase: .
+```
+
+clangd resolves `.clangd` per source file, walking up from the file, so each
+tree uses its own database with no global flag. Verify the choice per file:
+
+```bash
+clangd --check=ProjectA/Source/Game/Foo.cpp 2>&1 \
+  | grep -E 'Loaded compilation database|file not found'
+```
+
+### Restart clangd after changing `clangd.arguments`
+
+The server reads its arguments once, when it is spawned. Saving
+`settings.json` — in the editor or from a script — does **not** restart it,
+and `clangd.onConfigChanged` only covers changed config files, not VS Code
+settings. Until the server is restarted, the editor keeps diagging with the old
+argv and the fix appears not to work.
+
+Check what is actually running, then restart:
+
+```bash
+ps -eo args | grep '[c]langd'
+# clangd --compile-commands-dir=... --compile-commands-dir=...   <- stale
+```
+
+Run `clangd: Restart language server` from the command palette, or reload the
+window. Re-run the `ps` line and confirm the flags are the new ones.
+
 ## tasks.json
 
 Uses the helper below, so task definitions stay one line each.
@@ -86,6 +141,16 @@ Uses the helper below, so task definitions stay one line each.
       "command": "bash",
       "args": ["${workspaceFolder}/scripts/ue.sh", "GenerateClangDatabase"],
       "problemMatcher": []
+    },
+    {
+      "label": "UE: Watch clang database",
+      "type": "process",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/ue.sh", "WatchClangDatabase"],
+      "isBackground": true,
+      "runOptions": { "runOn": "folderOpen" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
     },
     {
       "label": "UE: Launch editor",
@@ -132,8 +197,16 @@ CLANG_DB_SNAPSHOT="$REPO_ROOT/.vscode/.clangdb-source-list"
 # Stale entries point at files that moved, and clangd then reports phantom
 # errors across the whole project. Compare the FILE LIST, not mtimes: sync
 # tools and builds both touch timestamps, so mtime checks rebuild every build.
+# Build.cs is included because module dependencies change the flags too.
 source_file_list() {
-    find "$REPO_ROOT/Source" -type f \( -name '*.h' -o -name '*.cpp' \) | sort
+    local roots=("$REPO_ROOT/Source")
+    if [[ -d "$REPO_ROOT/Plugins" ]]; then
+        roots+=("$REPO_ROOT/Plugins")
+    fi
+    find "${roots[@]}" \
+        -type d -name Intermediate -prune -o \
+        -type f \( -name '*.h' -o -name '*.cpp' -o -name '*.cs' \) -print \
+        | sort
 }
 
 refresh_clang_database_if_stale() {
@@ -146,7 +219,7 @@ refresh_clang_database_if_stale() {
     echo "Source list changed; regenerating compile_commands.json..." >&2
     "$BUILD_SH" -Mode=GenerateClangDatabase \
         "-Project=$PROJECT" "-Target=$TARGET $PLATFORM $CONFIGURATION" \
-        "-OutputDir=$REPO_ROOT/.vscode"
+        "-OutputDir=$REPO_ROOT/.vscode" -WaitMutex
     printf '%s\n' "$current" > "$CLANG_DB_SNAPSHOT"
 }
 
@@ -159,8 +232,17 @@ case "${1:-}" in
     GenerateClangDatabase)
         "$BUILD_SH" -Mode=GenerateClangDatabase \
             "-Project=$PROJECT" "-Target=$TARGET $PLATFORM $CONFIGURATION" \
-            "-OutputDir=$REPO_ROOT/.vscode"
+            "-OutputDir=$REPO_ROOT/.vscode" -WaitMutex
         source_file_list > "$CLANG_DB_SNAPSHOT"
+        ;;
+    WatchClangDatabase)
+        refresh_clang_database_if_stale || true
+        echo "watching $REPO_ROOT for source files (Ctrl+C to stop)..." >&2
+        while true; do
+            sleep 5
+            refresh_clang_database_if_stale \
+                || echo "warn: database refresh failed; retrying" >&2
+        done
         ;;
     GenerateProjectFiles)
         "$GENERATE_PROJECTS_SH" "-project=$PROJECT" -game -engine -progress
@@ -170,11 +252,33 @@ case "${1:-}" in
             "$EDITOR" "$PROJECT" -log
         ;;
     *)
-        echo "usage: $0 {BuildEditor|GenerateClangDatabase|GenerateProjectFiles|LaunchEditor}" >&2
+        echo "usage: $0 {BuildEditor|GenerateClangDatabase|WatchClangDatabase|GenerateProjectFiles|LaunchEditor}" >&2
         exit 2
         ;;
 esac
 ```
+
+### Keeping the database fresh while you edit
+
+Regenerating is cheap — one UBT tool-mode run measured **1.7–2.2 s** on a
+project with a dozen modules — so `WatchClangDatabase` is a background task that
+polls the sorted file list every 5 s and rebuilds only when something was added,
+renamed or removed. Content saves never trigger it: the flags do not change, and
+rewriting the JSON makes clangd reload and re-index for nothing.
+
+`-WaitMutex` on the tool-mode run lets it queue behind a concurrent build
+instead of failing, which matters because the watcher can fire while
+`BuildEditor` is running.
+
+`runOn: folderOpen` starts it with the workspace; VS Code asks once whether to
+allow automatic tasks in the folder. Keep at least the manual
+`GenerateClangDatabase` task: it is what you run when the database is missing
+entirely, and it is the fallback when the engine path is not configured.
+
+`BuildEditor` also refreshes first, so a build-only workflow does not need the
+watcher; without a build, a newly added file still resolves if clangd can
+interpolate flags from a neighbouring translation unit, but a new module or a
+changed `Build.cs` needs the real regenerate.
 
 ## .clangd
 
@@ -217,6 +321,8 @@ clangd --check=... --log=verbose                                    # why a head
 | Symptom | Cause |
 | --- | --- |
 | Whole project red, `file not found` on your own headers | stale `compile_commands.json` after files moved |
+| Whole project red right after adding a second source tree | two `--compile-commands-dir` values; the last one replaced the real database |
+| Settings fixed, diagnostics unchanged | clangd still running with the old argv — restart the server |
 | Works in terminal, red in VS Code | clangd never picked up `.clangd` / wrong `--compile-commands-dir` |
 | Phantom errors on engine types | `--query-driver` missing → wrong builtin target |
 | Every UE header "not used directly" | IncludeCleaner; `UnusedIncludes: None` |

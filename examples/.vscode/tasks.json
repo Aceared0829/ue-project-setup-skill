@@ -20,6 +20,20 @@
       "problemMatcher": []
     },
     {
+      // Background watcher: rebuilds the database when source files are added,
+      // renamed or removed, and never on content saves. Runs once per folder
+      // open; VS Code asks once whether to allow automatic tasks.
+      "label": "UE: Watch clang database",
+      "type": "process",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/ue.sh", "WatchClangDatabase"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "runOptions": { "runOn": "folderOpen" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
+    },
+    {
       "label": "UE: Generate project files (Linux)",
       "type": "process",
       "command": "bash",

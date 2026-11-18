@@ -79,11 +79,12 @@ Minimum:
 
 - C++ language server: clangd extension, with `C_Cpp.intelliSenseEngine` off so
   you do not get two sets of contradictory diagnostics.
-- `clangd.arguments`: `--compile-commands-dir=${workspaceFolder}/.vscode`,
-  `--background-index`, `--header-insertion=never`, and `--query-driver=` the
-  engine's Linux `clang++`.
-- Tasks for build / generate project files / generate compile database / launch
-  editor, so the terminal recipe lives in the workspace instead of your history.
+- `clangd.arguments`: `--background-index`, `--header-insertion=never`, and
+  `--query-driver=` the engine's Linux `clang++`. **Do not** add
+  `--compile-commands-dir` — see step 6 for why it breaks multi-tree repos.
+- Tasks for build / generate project files / generate compile database / watch
+  the database / launch editor, so the terminal recipe lives in the workspace
+  instead of your history.
 - Exclude `Binaries/`, `Intermediate/`, `Saved/`, `DerivedDataCache/` from
   search and the file watcher.
 
@@ -107,6 +108,26 @@ database and strip MSVC-only flags. UE's umbrella headers also need
 `Diagnostics.UnusedIncludes: None` — otherwise clangd offers a "fix" that deletes
 `CoreMinimal.h` and breaks the build. All of this, with verification steps, is in
 [references/vscode-linux.md](references/vscode-linux.md).
+
+Two traps that cost the most time:
+
+- `--compile-commands-dir` is single-valued. Pass it twice (host project plus a
+  plugin mirror) and the **last** one wins; if that directory has no database,
+  clangd silently falls back to flags with no `-I` paths and the whole project
+  reports `'Foo.h' file not found`. Select the database from `.clangd`
+  (`CompileFlags.CompilationDatabase`) per source tree instead, and keep
+  `clangd.arguments` free of that flag.
+- clangd reads `clangd.arguments` once at spawn. Saving `settings.json` does not
+  restart it, so a fixed configuration keeps producing old diagnostics until
+  `clangd: Restart language server` (or a window reload). Confirm with
+  `ps -eo args | grep '[c]langd'`.
+
+Regenerating is only ~2 s, so make it automatic rather than a chore: a
+background task that polls the file list every 5 s, rebuilds only on
+add/rename/remove, and runs the tool mode with `-WaitMutex` so it can queue
+behind a build. `examples/scripts/ue.sh WatchClangDatabase` plus the
+`UE: Watch clang database` task do this; `runOn: folderOpen` starts it with the
+workspace.
 
 ## 7. Let the AI agent drive the editor
 
@@ -185,6 +206,11 @@ Rules and the `.props`-override case: [references/plugins-and-vcs.md](references
   branch on `Target.Platform` and pick the native library per platform.
 - Don't delete an include clangd calls unused in UE code; check whether the
   header is a PCH/umbrella header first.
+- Don't pass `--compile-commands-dir` twice, and don't pass it at all when each
+  source tree ships a `.clangd` — the last value wins and the other tree's
+  includes stop resolving.
+- Don't assume editing `settings.json` restarted clangd; the server keeps its
+  original argv until it is restarted.
 - Don't commit absolute engine paths (`D:\UE_5.8\Engine`,
   `/path/to/UE_5.8/Engine`) into shared files.
 - Don't reach for private engine APIs when public ones reproduce the behavior;

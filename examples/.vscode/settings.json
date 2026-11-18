@@ -1,8 +1,14 @@
 {
-  // clangd reads the UBT-generated database. Replace the query-driver path
-  // with your engine's Linux clang++ (glob is allowed).
+  // Do NOT pass --compile-commands-dir here. It is a single-valued flag: give
+  // it twice (e.g. host project + a plugin mirror tree) and the last value
+  // wins, silently dropping the other. clangd then falls back to flags without
+  // include paths and every own header becomes "file not found".
+  // The database is selected by <repo>/.clangd instead:
+  //   CompileFlags.CompilationDatabase: .vscode
+  // A second, non-UBT source tree gets its own .clangd next to its sources.
+  //
+  // Replace the query-driver path with your engine's Linux clang++ (glob OK).
   "clangd.arguments": [
-    "--compile-commands-dir=${workspaceFolder}/.vscode",
     "--background-index",
     "--header-insertion=never",
     "--completion-style=detailed",

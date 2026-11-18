@@ -7,7 +7,7 @@ placeholders, run `Check`.
 | --- | --- | --- |
 | `.clangd` | repo root, next to `<Project>.uproject` | point clangd at the UBT database, strip MSVC flags, silence the UE include false positive |
 | `.vscode/settings.json` | `.vscode/settings.json` | clangd as the only C++ server, `--query-driver`, search/watcher excludes |
-| `.vscode/tasks.json` | `.vscode/tasks.json` | build / database / project files / launch / check, all via `ue.sh` |
+| `.vscode/tasks.json` | `.vscode/tasks.json` | build / database / watch / project files / launch / check, all via `ue.sh` |
 | `scripts/ue.sh` | `scripts/ue.sh` (chmod +x) | the actual commands, plus compile-database staleness detection |
 
 ## Edit three things
@@ -30,11 +30,16 @@ Nothing else is project-specific.
 bash scripts/ue.sh Check            # resolves engine, finds the project
 bash scripts/ue.sh BuildEditor      # first real build; also refreshes the db if sources moved
 bash scripts/ue.sh GenerateClangDatabase
+bash scripts/ue.sh WatchClangDatabase   # Ctrl+C to stop; also the VS Code background task
 ```
 
 `Check` prints the resolved repo, engine, project and target, and whether the
 editor binary exists yet. If it reports the engine as missing, fix `UE_ROOT` /
 `.vscode/ue-root` before anything else.
+
+The first `WatchClangDatabase` run rebuilds only if the file list differs from
+`.vscode/.clangdb-source-list`. One tool-mode run takes ~2 s; content saves
+never trigger it.
 
 ## Keeping these in version control
 
