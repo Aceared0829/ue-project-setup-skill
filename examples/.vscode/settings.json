@@ -7,7 +7,9 @@
   //   CompileFlags.CompilationDatabase: .vscode
   // A second, non-UBT source tree gets its own .clangd next to its sources.
   //
-  // Replace the query-driver path with your engine's Linux clang++ (glob OK).
+  // Replace the query-driver path with this engine's Linux clang++ (glob OK).
+  // Per machine: if this file is committed, move the flag to User settings.
+  // scripts/ue.sh Check prints the path. Do not copy it from another project.
   "clangd.arguments": [
     "--background-index",
     "--header-insertion=never",
@@ -36,13 +38,15 @@
     "**/Intermediate": true,
     "**/Saved": true,
     "**/DerivedDataCache": true,
-    "**/Plugins/**/ThirdParty/**": true
+    "**/Plugins/**/ThirdParty/**": true,
+    "**/node_modules": true
   },
   "files.watcherExclude": {
     "**/Binaries/**": true,
     "**/Intermediate/**": true,
     "**/Saved/**": true,
     "**/DerivedDataCache/**": true,
-    "**/Plugins/**/ThirdParty/**": true
+    "**/Plugins/**/ThirdParty/**": true,
+    "**/node_modules/**": true
   }
 }

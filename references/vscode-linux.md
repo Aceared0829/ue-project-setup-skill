@@ -49,13 +49,15 @@ of diagnostics, and the MS one cannot read UBT's flags.
     "**/Intermediate": true,
     "**/Saved": true,
     "**/DerivedDataCache": true,
-    "**/Plugins/**/ThirdParty/**": true
+    "**/Plugins/**/ThirdParty/**": true,
+    "**/node_modules": true
   },
   "files.watcherExclude": {
     "**/Binaries/**": true,
     "**/Intermediate/**": true,
     "**/Saved/**": true,
-    "**/DerivedDataCache/**": true
+    "**/DerivedDataCache/**": true,
+    "**/node_modules/**": true
   }
 }
 ```
@@ -289,9 +291,12 @@ CompileFlags:
 
   # UBT emits flags for the engine's clang/msvc; the local clangd rejects some.
   Remove: [-resource-dir, -Werror, -WX, /WX, -mwaitpkg, -fms-hotpatch]
-  Add: [-Wno-unknown-warning-option, -Wno-unused-command-line-argument, -D_MSVC_TRADITIONAL=0]
+  # -ferror-limit=0 keeps UE_LOG token-paste errors from aborting the file.
+  Add: [-Wno-unknown-warning-option, -Wno-unused-command-line-argument, -D_MSVC_TRADITIONAL=0, -ferror-limit=0]
 
 Diagnostics:
+  Suppress:
+    - invalid-token-paste
   # IncludeCleaner cannot model UE's shared PCH or transitive *.generated.h
   # dependencies: it calls CoreMinimal.h "not used directly" and the offered
   # fix breaks the build.
@@ -299,6 +304,18 @@ Diagnostics:
 ```
 
 Leave `MissingIncludes` at its default; it is a separate key and often useful.
+
+`invalid-token-paste` is a different failure from IncludeCleaner. `UE_LOG`
+pastes tokens in a way the engine clang accepts and a newer clangd rejects.
+Each call site is one error; clangd's default cap is 20, after which it stops
+parsing and every later type looks undefined. Suppress the diagnostic and lift
+the cap. Do not "fix" the macros.
+
+If the git root is not the `.uproject`, this file goes next to the `.uproject`.
+A plugin tree that is not mounted in any `.uproject` has nothing for
+`GenerateClangDatabase` to index. Mount it in a host, build that host, and
+point the plugin tree's `.clangd` at the host database. A hand-written compile
+database drifts the moment `Build.cs` or a generated header changes.
 
 ## Verifying diagnostics without the editor
 
@@ -326,5 +343,8 @@ clangd --check=... --log=verbose                                    # why a head
 | Works in terminal, red in VS Code | clangd never picked up `.clangd` / wrong `--compile-commands-dir` |
 | Phantom errors on engine types | `--query-driver` missing → wrong builtin target |
 | Every UE header "not used directly" | IncludeCleaner; `UnusedIncludes: None` |
+| `invalid-token-paste` on `UE_LOG`, then a cascade of bogus errors | clangd hit its 20-error cap; suppress `invalid-token-paste` and add `-ferror-limit=0` |
+| Handshake works, `list_toolsets` is empty | `ToolsetRegistry` is not the catalog; enable `AllToolsets` or the specific toolset plugin |
+| MCP ini looks right, server never starts | 5.8 and 5.9 use different `/Script/` sections; the other engine's section is ignored. Also check `Saved/Config/LinuxEditor/EditorPerProjectUserSettings.ini` |
 | Duplicate, contradictory squiggles | MS C++ IntelliSense still enabled |
 | Autocomplete slow / machine pegged | no `--background-index`, or `Binaries/`+`Intermediate/` indexed via search |

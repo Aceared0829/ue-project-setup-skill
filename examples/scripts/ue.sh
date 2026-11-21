@@ -73,6 +73,21 @@ case "${1:-}" in
         else
             echo "editor:  not built yet (run BuildEditor)"
         fi
+        assoc="$(grep -o '"EngineAssociation"[[:space:]]*:[[:space:]]*"[^"]*"' "$PROJECT" | head -1 || true)"
+        major="$(grep -o '"MajorVersion"[[:space:]]*:[[:space:]]*[0-9]*' "$UE_ROOT/Engine/Build/Build.version" | head -1 || true)"
+        minor="$(grep -o '"MinorVersion"[[:space:]]*:[[:space:]]*[0-9]*' "$UE_ROOT/Engine/Build/Build.version" | head -1 || true)"
+        echo "uproject: ${assoc:-EngineAssociation unknown}"
+        echo "tree:     ${major:-MajorVersion unknown} ${minor:-MinorVersion unknown}"
+        query_driver="$(find "$UE_ROOT/Engine/Extras/ThirdPartyNotUE/SDKs/HostLinux" -type f -path '*/bin/clang++' -print -quit 2>/dev/null || true)"
+        if [[ -n "$query_driver" ]]; then
+            echo "query-driver (User settings if settings.json is shared):"
+            echo "  --query-driver=$query_driver"
+        else
+            echo "query-driver: HostLinux clang++ not found under this engine"
+        fi
+        if grep -n 'compile-commands-dir' "$REPO_ROOT/.vscode/settings.json" >/dev/null 2>&1; then
+            echo "warn: .vscode/settings.json sets --compile-commands-dir; remove it and select the database from .clangd" >&2
+        fi
         ;;
     BuildEditor)
         refresh_clang_database_if_stale

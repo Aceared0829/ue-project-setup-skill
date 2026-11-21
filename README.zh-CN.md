@@ -57,8 +57,10 @@ examples/                       # 可直接使用的 .clangd、.vscode/*、scrip
 
 ## 说明
 
-- 以 UE 5.8 为基准编写，除个别步骤特别注明外，5.3+ 均适用。MCP 部分需要 5.6+，
-  插件位于 `Engine/Plugins/Experimental/ModelContextProtocol`。
+- 以 UE 5.8 为基准，并在 5.9 上核对过。除个别步骤特别注明外，5.3+ 均适用。
+  MCP 部分需要 5.6+，插件位于 `Engine/Plugins/Experimental/ModelContextProtocol`。
+  设置类在 5.8 属于 `ModelContextProtocolEngine`，在 5.9 挪到了
+  `ModelContextProtocol`，ini 段不能在两个引擎之间照抄。
 - 刻意写得“有主张”：明确告诉 agent **不要**做什么（删掉 clangd 报未使用的 include、
   提交引擎绝对路径、用抛异常的方式做平台守卫），因为每一个都值一次完整的调试。
 - 验证本身就是步骤的一部分：构建命令、curl 握手、打印 `HasMouseCapture`。

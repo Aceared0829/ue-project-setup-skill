@@ -60,8 +60,11 @@ examples/                       # working .clangd, .vscode/*, scripts/ue.sh
 
 ## Notes
 
-- Written against UE 5.8; the material applies to 5.3+ unless a step says
-  otherwise. MCP needs 5.6+ (`Engine/Plugins/Experimental/ModelContextProtocol`).
+- Written against UE 5.8 and checked on 5.9. The material applies to 5.3+
+  unless a step says otherwise. MCP needs 5.6+
+  (`Engine/Plugins/Experimental/ModelContextProtocol`). The settings class
+  lives in `ModelContextProtocolEngine` on 5.8 and in `ModelContextProtocol`
+  on 5.9 — the ini section is not portable across those two.
 - It is opinionated on purpose: it tells the agent what *not* to do (delete an
   include clangd flags, commit absolute engine paths, guard platforms by
   throwing) because each of those costs a debugging session.

@@ -12,9 +12,13 @@ CompileFlags:
 
   # UBT emits engine-clang / MSVC flags that the local clangd rejects.
   Remove: [-resource-dir, -Werror, -WX, /WX, -mwaitpkg, -fms-hotpatch]
-  Add: [-Wno-unknown-warning-option, -Wno-unused-command-line-argument, -D_MSVC_TRADITIONAL=0]
+  # UE_LOG token-pastes are errors on a clangd newer than the engine clang.
+  # The default 20-error cap then aborts parsing for the rest of the file.
+  Add: [-Wno-unknown-warning-option, -Wno-unused-command-line-argument, -D_MSVC_TRADITIONAL=0, -ferror-limit=0]
 
 Diagnostics:
+  Suppress:
+    - invalid-token-paste
   # UE relies on the shared PCH and transitive *.generated.h includes.
   # IncludeCleaner flags CoreMinimal.h as "not used directly"; the offered
   # fix breaks the build, so the diagnostic is off.

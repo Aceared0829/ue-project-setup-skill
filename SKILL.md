@@ -1,6 +1,6 @@
 ---
 name: ue-project-setup
-description: Set up an Unreal Engine 5 project on Linux for VS Code and AI agents — declare platform support, build the editor from the CLI, generate compile_commands.json and configure clangd (including UE umbrella-header false positives), wire the built-in UE MCP server so an assistant can drive the running editor, and fix PIE mouse/keyboard capture plus HUD Slate pass-through. Use when setting up or repairing a UE project on Linux, when VS Code shows phantom errors or no IntelliSense, when the editor is running but the assistant cannot reach it, or when PIE input is broken. Not for gameplay feature work.
+description: Set up an Unreal Engine 5 project on Linux for VS Code and AI agents — declare platform support, build the editor from the CLI, generate compile_commands.json and configure clangd (including UE umbrella-header false positives and UE_LOG invalid-token-paste), wire the built-in UE MCP server so an assistant can drive the running editor (5.8 and 5.9 use different settings sections), and fix PIE mouse/keyboard capture plus HUD Slate pass-through. Use when setting up or repairing a UE project on Linux, when VS Code shows phantom errors or no IntelliSense, when the editor is running but the assistant cannot reach it, or when PIE input is broken. Not for gameplay feature work.
 ---
 
 # Unreal Engine project setup (Linux + VS Code + AI agent)
@@ -22,6 +22,12 @@ keep the per-machine value out of version control:
 export UE_ROOT=/path/to/UE_5.8
 test -f "$UE_ROOT/Engine/Build/Build.version" && echo ok
 ```
+
+Match `UE_ROOT` to `<Project>.uproject` → `EngineAssociation`, then confirm
+`Engine/Build/Build.version`. A 5.9 project pointed at a 5.8 tree (or the
+reverse) fails later as a missing plugin, a dead MCP server, or red
+IntelliSense. Do not reuse another project's `UE_ROOT`. Two engines side by
+side is normal; each project picks one.
 
 For an installed (launcher) build, `Engine/Binaries/Linux/UnrealEditor` already
 exists. For a source build it does not until you compile it once — see step 3.
@@ -116,11 +122,26 @@ Two traps that cost the most time:
   clangd silently falls back to flags with no `-I` paths and the whole project
   reports `'Foo.h' file not found`. Select the database from `.clangd`
   (`CompileFlags.CompilationDatabase`) per source tree instead, and keep
-  `clangd.arguments` free of that flag.
-- clangd reads `clangd.arguments` once at spawn. Saving `settings.json` does not
-  restart it, so a fixed configuration keeps producing old diagnostics until
-  `clangd: Restart language server` (or a window reload). Confirm with
-  `ps -eo args | grep '[c]langd'`.
+  `clangd.arguments` free of that flag. Do not pass it even once when `.clangd`
+  already names the database.
+- `UE_LOG` token-pastes are ill-formed to a clangd newer than the engine clang.
+  Each call site emits `invalid-token-paste`, the default 20-error cap aborts
+  parsing, and the rest of the file is phantom errors. `.clangd` must set
+  `Add: [-ferror-limit=0]` and `Diagnostics.Suppress: invalid-token-paste`.
+  Umbrella-header noise (`UnusedIncludes: None`) does not cover this.
+- The git root is often not the `.uproject` (a repo that also holds Python,
+  docs, or a loose plugin tree). Put `.clangd` next to the `.uproject`, not at
+  the git root. UBT can only index a target that belongs to a `.uproject`. A
+  plugin directory that is not mounted in a host project has no real compile
+  database — do not invent one. Mount it, build the host, and point that tree's
+  `.clangd` at the host database.
+- clangd reads `clangd.arguments` once at spawn. `clangd.onConfigChanged:
+  restart` reloads `.clangd`, not `clangd.arguments`. A fixed argument list
+  keeps producing old diagnostics until `clangd: Restart language server` (or a
+  window reload). Confirm with `ps -eo args | grep '[c]langd'`.
+- `--query-driver` is per machine. Discover the engine clang++ and put the flag
+  in User settings when `settings.json` is shared. `scripts/ue.sh Check` prints
+  the path. A path copied from another engine is skipped silently.
 
 Regenerating is only ~2 s, so make it automatic rather than a chore: a
 background task that polls the file list every 5 s, rebuilds only on
@@ -139,13 +160,40 @@ UE 5.6+ ships the server at
 { "Name": "ModelContextProtocol", "Enabled": true }
 ```
 
+The settings class moved modules. Copying the section from another project
+silently does nothing: the server stays off while the editor looks healthy.
+
 ```ini
-; Config/DefaultEditorPerProjectUserSettings.ini
+; 5.8 — Config/DefaultEditorPerProjectUserSettings.ini
+; class is in module ModelContextProtocolEngine
 [/Script/ModelContextProtocolEngine.ModelContextProtocolSettings]
 bAutoStartServer=True
 ServerPortNumber=8000
 ServerUrlPath=/mcp
 ```
+
+```ini
+; 5.9 — same file, different section. Do not leave the 5.8 section in place.
+[/Script/ModelContextProtocol.ModelContextProtocolSettings]
+bAutoStartServer=True
+ServerPortNumber=8000
+ServerUrlPath=/mcp
+```
+
+Write only the section for the engine pinned in step 1. Confirm against the
+settings header (`MODELCONTEXTPROTOCOLENGINE_API` vs `MODELCONTEXTPROTOCOL_API`)
+rather than guessing. On 5.9 leave `bEnableToolSearch` at its default (`true`).
+Setting it false registers every tool natively and floods the client.
+
+`ModelContextProtocol` depends on `ToolsetRegistry`, which is not the tool
+catalog. If the handshake succeeds and `list_toolsets` is empty, enable
+`AllToolsets` (`Engine/Plugins/Experimental/Toolsets/AllToolsets`) or the one
+toolset plugin you actually need. It is `EnabledByDefault` on 5.8 and 5.9; a
+project can still have it turned off.
+
+Two editors both want port 8000. The second fails to bind, which looks like
+"MCP is down". One live editor per port: change `ServerPortNumber` and the
+client URL together.
 
 Clients disagree on the wrapper key, so keep both files:
 
@@ -206,11 +254,16 @@ Rules and the `.props`-override case: [references/plugins-and-vcs.md](references
   branch on `Target.Platform` and pick the native library per platform.
 - Don't delete an include clangd calls unused in UE code; check whether the
   header is a PCH/umbrella header first.
-- Don't pass `--compile-commands-dir` twice, and don't pass it at all when each
-  source tree ships a `.clangd` — the last value wins and the other tree's
-  includes stop resolving.
+- Don't pass `--compile-commands-dir` at all when each source tree ships a
+  `.clangd` — the flag is single-valued, the last one wins, and the other
+  tree's includes stop resolving.
+- Don't copy the MCP ini section from a project on another engine. 5.8 and 5.9
+  use different `/Script/` modules; the wrong one is ignored.
+- Don't synthesize a `compile_commands.json` for a plugin that is not part of
+  a `.uproject`. Mount it in a host and use that host's database.
 - Don't assume editing `settings.json` restarted clangd; the server keeps its
-  original argv until it is restarted.
+  original argv until it is restarted. `.clangd` edits do restart when
+  `clangd.onConfigChanged` is `restart`.
 - Don't commit absolute engine paths (`D:\UE_5.8\Engine`,
   `/path/to/UE_5.8/Engine`) into shared files.
 - Don't reach for private engine APIs when public ones reproduce the behavior;
